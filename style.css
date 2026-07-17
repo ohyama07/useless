@@ -296,6 +296,21 @@ button:active:not(:disabled) {
     content: attr(data-processed-index);
 }
 
+.page-qr {
+    background: #fff;
+    border: 2px solid var(--line-dark);
+    box-shadow: 4px 4px 0 var(--shadow);
+    margin: 42px 0 0;
+    padding: 12px;
+}
+
+.page-qr img {
+    display: block;
+    height: auto;
+    max-width: 240px;
+    width: min(60vw, 240px);
+}
+
 .progress-dialog,
 .download-dialog {
     background: var(--panel);
@@ -373,6 +388,7 @@ button:active:not(:disabled) {
     .specification-heading { padding: 17px 16px 15px; }
     .specification-list { grid-template-columns: 1fr; padding: 10px 16px 14px; }
     .specification-list li:nth-child(odd) { border-right: 0; }
+    .page-qr { margin-top: 34px; }
     .dialog-actions { align-items: stretch; flex-direction: column; }
 }
 
