@@ -1,0 +1,66 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+Antique:wght@400;500;700;900&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="style.css">
+        <title>"0"から"1"を作る機械</title>
+    </head>
+    <body>
+        <header>
+            <h1 id="siteHeading">"0"から"1"を作る機械</h1>
+        </header>
+        <main id="mainContent" aria-busy="false">
+            <label class="drop-area" id="dropArea" for="fileInput">
+                <input id="fileInput" type="file" accept=".txt,.docx" multiple>
+                <span class="drop-title">ファイルをドロップ</span>
+                <span class="drop-description">.txt / .docx のみ対応</span>
+                <span class="drop-status" id="dropStatus" aria-live="polite">クリックして選択することもできます</span>
+            </label>
+            <label class="sr-only" for="inputText">変換する文章</label>
+            <textarea id="inputText" class="inputText" placeholder="ここにテキストを入力してもOKです"></textarea>
+            <label class="sr-only" for="outputText">変換結果</label>
+            <textarea id="outputText" class="outputText" readonly hidden aria-live="polite"></textarea>
+            <button class="generate-button" id="generateButton" disabled>処理開始</button>
+            <section class="specification" id="specification" aria-labelledby="specificationHeading">
+                <div class="specification-heading">
+                    <p class="specification-index" id="specificationIndex" data-original-text="SPECIFICATION / 10 TYPES">SPECIFICATION / 10 TYPES</p>
+                    <h2 id="specificationHeading">対応している表記</h2>
+                    <p id="specificationDescription" data-original-text="文章中に存在する以下10種類の表記に含まれる0を1に変換します">文章中に存在する以下10種類の表記に含まれる0を1に変換します</p>
+                </div>
+                <ol class="specification-list">
+                    <li data-processed-index="11">アラビア数字</li>
+                    <li data-processed-index="12">英語基数</li>
+                    <li data-processed-index="13">英語序数</li>
+                    <li data-processed-index="14">英語月名</li>
+                    <li data-processed-index="15">和風月名</li>
+                    <li data-processed-index="16">ローマ数字</li>
+                    <li data-processed-index="17">漢数字</li>
+                    <li data-processed-index="18">漢数字大字</li>
+                    <li data-processed-index="19">平仮名数字</li>
+                    <li data-processed-index="11">SI接頭辞付き数値</li>
+                </ol>
+            </section>
+        </main>
+        <dialog class="progress-dialog" id="progressDialog">
+            <div class="progress-area" id="progressArea" hidden>
+                <div class="spinner" aria-label="処理中"></div>
+                <div class="progress-track">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <span class="progress-label" id="progressLabel">処理中 0%</span>
+            </div>
+        </dialog>
+        <dialog class="download-dialog" id="downloadDialog">
+            <p>変換したファイルをダウンロードしますか？</p>
+            <div class="dialog-actions">
+                <button type="button" class="dialog-button secondary" id="cancelDownloadButton">しない</button>
+                <button type="button" class="dialog-button primary" id="confirmDownloadButton">ダウンロードする</button>
+            </div>
+        </dialog>
+    </body>
+    <script src="main.js"></script>
+</html>
