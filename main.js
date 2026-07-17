@@ -29,7 +29,43 @@ const enMonthLarge = ["October", "November"];
 const enMonthSmall = ["Oct", "Nov"];
 const enOrdinalNum = ["zeroth", "tenth", "twentieth", "thirtieth", "fortieth", "fiftieth", "sixtieth", "seventieth", "eightieth","ninetieth","hundredth","thousandth", "millionth", "billionth", "trillionth", "quadrillionth", "quintillionth", "sextillionth", "septillionth", "octillionth", "nonillionth", "decillionth", "undecillionth", "duodecillionth", "tredecillionth", "quattuordecillionth", "quindecillionth", "sexdecillionth", "septendecillionth", "octodecillionth", "novemdecillionth", "vigintillionth", "unvigintillionth", "duovigintillionth", "tresvigintillionth", "quattuorvigintillionth", "quinvigintillionth", "sesvigintillionth", "septemvigintillionth", "octovigintillionth", "novemvigintillionth", "trigintillionth", "untrigintillionth", "duotrigintillionth", "trestrigintillionth", "quattuortrigintillionth", "quintrigintillionth", "sestrigintillionth", "septentrigintillionth", "octotrigintillionth", "novemtrigintillionth", "quadragintillionth", "unquadragintillionth", "duoquadragintillionth", "tresquadragintillionth", "quattuorquadragintillionth", "quinquadragintillionth", "sesquadragintillionth", "septenquadragintillionth", "octoquadragintillionth", "novemquadragintillionth", "quinquagintillionth", "unquinquagintillionth", "duoquinquagintillionth", "tresquinquagintillionth", "quattuorquinquagintillionth", "quinquinquagintillionth", "sesquinquagintillionth", "septenquinquagintillionth", "octoquinquagintillionth", "novemquinquagintillionth", "sexagintillionth", "unsexagintillionth", "duosexagintillionth", "tresexagintillionth", "quattuorsexagintillionth", "quinsexagintillionth", "sessexagintillionth", "septensexagintillionth", "octosexagintillionth", "novemsexagintillionth", "septuagintillionth", "unseptuagintillionth", "duoseptuagintillionth", "treseptuagintillionth", "quattuorseptuagintillionth", "quinseptuagintillionth", "sesseptuagintillionth", "septenseptuagintillionth", "octoseptuagintillionth", "novemseptuagintillionth", "octogintillionth", "unoctogintillionth", "duooctogintillionth", "tresoctogintillionth", "quattuoroctogintillionth", "quinoctogintillionth", "sexoctogintillionth", "septemoctogintillionth", "octooctogintillionth", "novemoctogintillionth", "nonagintillionth", "unnonagintillionth", "duononagintillionth", "tresnonagintillionth", "quattuornonagintillionth", "quinnonagintillionth", "sexnonagintillionth", "septennonagintillionth", "octononagintillionth", "novemnonagintillionth", "centillionth"];
 
-const siNum = ["d", "c", "m", "μ", "n", "p", "f", "a", "z", "y", "r", "q","da","h","k", "M", "G", "T", "P", "E", "Z", "Y", "R", "Q"];
+const SI_PREFIXES = {
+    q: { exponent: -30, name: "クエクト" },
+    r: { exponent: -27, name: "ロント" },
+    y: { exponent: -24, name: "ヨクト" },
+    z: { exponent: -21, name: "ゼプト" },
+    a: { exponent: -18, name: "アト" },
+    f: { exponent: -15, name: "フェムト" },
+    p: { exponent: -12, name: "ピコ" },
+    n: { exponent: -9, name: "ナノ" },
+    "μ": { exponent: -6, name: "マイクロ", canonical: "μ" },
+    "µ": { exponent: -6, name: "マイクロ", canonical: "μ" },
+    u: { exponent: -6, name: "マイクロ", canonical: "μ" },
+    m: { exponent: -3, name: "ミリ" },
+    c: { exponent: -2, name: "センチ" },
+    d: { exponent: -1, name: "デシ" },
+    da: { exponent: 1, name: "デカ" },
+    h: { exponent: 2, name: "ヘクト" },
+    k: { exponent: 3, name: "キロ" },
+    M: { exponent: 6, name: "メガ" },
+    G: { exponent: 9, name: "ギガ" },
+    T: { exponent: 12, name: "テラ" },
+    P: { exponent: 15, name: "ペタ" },
+    E: { exponent: 18, name: "エクサ" },
+    Z: { exponent: 21, name: "ゼタ" },
+    Y: { exponent: 24, name: "ヨタ" },
+    R: { exponent: 27, name: "ロナ" },
+    Q: { exponent: 30, name: "クエタ" }
+};
+
+// 誤検出を避けるため、接頭辞との組み合わせを許可する基本単位を明示する。
+// kgも k + g として厳密に基本単位gへ換算する。
+const SI_BASE_UNITS = {
+    m: { name: "メートル" },
+    g: { name: "グラム" }
+};
+
+const siNum = Object.keys(SI_PREFIXES);
 
 const jaNum = ["十", "百", "千", "万", "億", "兆", "京", "垓", "𥝱", "穣", "溝", "澗", "正", "載", "極", "恒河沙", "阿僧祇", "那由他", "不可思議", "無量大数"];
 const addJaNum = ["一"];
@@ -470,12 +506,8 @@ const notationSystems = {
         digits: {},
         smallUnits: [],
         largeUnits: siNum.map((symbol) => ({
-            exponent: {
-                q: -30, r: -27, y: -24, z: -21, a: -18, f: -15, p: -12, n: -9,
-                "μ": -6, m: -3, c: -2, d: -1, da: 1, h: 2, k: 3, M: 6,
-                G: 9, T: 12, P: 15, E: 18, Z: 21, Y: 24, R: 27, Q: 30
-            }[symbol],
-            canonical: symbol,
+            exponent: SI_PREFIXES[symbol].exponent,
+            canonical: SI_PREFIXES[symbol].canonical || symbol,
             aliases: [symbol]
         })),
         specialForms: [],
@@ -910,25 +942,25 @@ function detectJapaneseHiraganaDigitSequence(text) {
 
 function detectSI(text) {
     const tokens = [];
-    const prefixes = sortByLongestFirst([
-        ...notationSystems.siPrefix.regexVocabulary,
-        "u"
-    ]);
+    const prefixes = sortByLongestFirst(Object.keys(SI_PREFIXES));
+    const baseUnits = sortByLongestFirst(Object.keys(SI_BASE_UNITS));
     const prefixPattern = prefixes.map(escapeRegExp).join("|");
-    const siPattern = new RegExp(`[-−]?(?:[0-9０-９]+(?:[.．][0-9０-９]+)?)(${prefixPattern})([A-Za-zμ]*)`, "g");
+    const baseUnitPattern = baseUnits.map(escapeRegExp).join("|");
+    const siPattern = new RegExp(`[-−]?(?:[0-9０-９]+(?:[.．][0-9０-９]+)?)(${prefixPattern})(${baseUnitPattern})(?![A-Za-zμµ])`, "g");
 
     for (const match of text.matchAll(siPattern)) {
         const source = match[0];
         const numericPart = source.slice(0, source.length - match[1].length - match[2].length);
-        const prefix = match[1];
-        const unitPart = match[2] || "";
+        const prefixSource = match[1];
+        const prefixDefinition = SI_PREFIXES[prefixSource];
+        const baseUnit = match[2];
 
         tokens.push(createToken(match.index, match.index + source.length, source, "si", 0.95, {
             numericPart,
-            prefix: prefix === "u" ? "μ" : prefix,
-            prefixSource: prefix,
-            prefixAlias: prefix === "u" ? "u" : null,
-            unitPart
+            prefix: prefixDefinition.canonical || prefixSource,
+            prefixSource,
+            prefixAlias: prefixSource !== (prefixDefinition.canonical || prefixSource) ? prefixSource : null,
+            baseUnit
         }));
     }
 
@@ -1071,8 +1103,17 @@ const notationDetectionTests = [
         ]
     },
     {
-        input: "10kgと1.5M",
+        input: "10kgと10mm",
         expectedTypes: ["si", "si"]
+    },
+    {
+        input: "10mmHg 10ms 10mol 10万円 10m先",
+        mustNotContain: [
+            { type: "si", source: "10mmHg" },
+            { type: "si", source: "10ms" },
+            { type: "si", source: "10mol" },
+            { type: "si", source: "10m" }
+        ]
     },
     {
         input: "million October MMCC 2020",
@@ -1905,11 +1946,10 @@ function parseRomanSuffixToken(token) {
 }
 
 function parseSIToken(token) {
-    const prefixEntry = notationSystems.siPrefix.largeUnits.find((entry) => {
-        return entry.canonical === token.metadata.prefix;
-    });
+    const prefixEntry = SI_PREFIXES[token.metadata.prefixSource];
+    const baseUnitEntry = SI_BASE_UNITS[token.metadata.baseUnit];
 
-    if (!prefixEntry) {
+    if (!prefixEntry || !baseUnitEntry) {
         return createParseResult(token, false, null, {}, [`Unknown SI prefix: ${token.metadata.prefix}`]);
     }
 
@@ -1930,7 +1970,7 @@ function parseSIToken(token) {
             canonical: token.metadata.prefix,
             exponent: prefixEntry.exponent
         },
-        unitPart: token.metadata.unitPart
+        baseUnit: token.metadata.baseUnit
     }, {
         digitWidth: parsedNumber.style.digitWidth,
         prefixAlias: token.metadata.prefixAlias,
@@ -2038,7 +2078,7 @@ const notationParsingTests = [
     ["Oct", true, "10"],
     ["神無月", true, "10"],
     ["10kg", true, null],
-    ["1.5M", true, null]
+    ["10mm", true, null]
 ];
 
 function runNotationParsingTests() {
@@ -2064,8 +2104,8 @@ function runNotationParsingEdgeTests() {
     const october = parseAllNotationCandidates("October");
     const million = parseAllNotationCandidates("million");
     const mixedRoman = parseRomanToken(createToken(0, 2, "ⅠX", "roman", 0.5, { alphabet: "mixed" }));
-    const milli = parseAllNotationCandidates("10m")[0];
-    const mega = parseAllNotationCandidates("10M")[0];
+    const milli = parseAllNotationCandidates("10mm")[0];
+    const mega = parseAllNotationCandidates("10Mm")[0];
 
     return [
         {
@@ -2094,7 +2134,7 @@ function runNotationParsingEdgeTests() {
             parsed: mixedRoman
         },
         {
-            input: "10m / 10M",
+            input: "10mm / 10Mm",
             pass: milli?.representation?.prefix?.exponent === -3 && mega?.representation?.prefix?.exponent === 6,
             parsed: [milli, mega]
         }
@@ -2209,41 +2249,53 @@ function trimFractionTrailingZeros(fractionDigits) {
     return fractionDigits.replace(/0+$/g, "");
 }
 
-function transformSIValue(representation) {
-    const normalized = normalizeDecimalDigits(
-        representation.numericPart.integerDigits,
-        representation.numericPart.fractionDigits
-    );
-    const actualDecimal = decimalFromDigitsAndPosition(
-        normalized.digits,
-        normalized.decimalPos + representation.prefix.exponent
-    );
-    const transformedActual = {
-        integerDigits: replaceZeroDigits(actualDecimal.integerDigits),
-        fractionDigits: replaceZeroDigits(actualDecimal.fractionDigits)
+function normalizeDecimalString(parts) {
+    const integerDigits = (parts.integerDigits || "0").replace(/^0+(?=\d)/, "") || "0";
+    const fractionDigits = trimFractionTrailingZeros(parts.fractionDigits || "");
+
+    return {
+        sign: parts.sign || "",
+        integerDigits,
+        fractionDigits
     };
-    const hasReplaceableZero = transformedActual.integerDigits !== actualDecimal.integerDigits
-        || transformedActual.fractionDigits !== actualDecimal.fractionDigits;
-    const transformedDigits = `${transformedActual.integerDigits}${transformedActual.fractionDigits}`;
-    const transformedPrefixDecimal = decimalFromDigitsAndPosition(
-        transformedDigits,
-        transformedActual.integerDigits.length - representation.prefix.exponent
-    );
+}
+
+function convertToBaseUnitDecimal(numericPart, exponent) {
+    const normalized = normalizeDecimalDigits(numericPart.integerDigits, numericPart.fractionDigits);
+    const shifted = decimalFromDigitsAndPosition(normalized.digits, normalized.decimalPos + exponent);
+
+    return normalizeDecimalString({
+        sign: numericPart.sign,
+        integerDigits: shifted.integerDigits,
+        fractionDigits: shifted.fractionDigits
+    });
+}
+
+function transformDigits(decimalParts) {
+    return {
+        ...decimalParts,
+        integerDigits: replaceZeroDigits(decimalParts.integerDigits),
+        fractionDigits: replaceZeroDigits(decimalParts.fractionDigits)
+    };
+}
+
+function formatConvertedQuantity(decimalParts, baseUnit) {
+    return `${decimalPartsToString(decimalParts)}${baseUnit}`;
+}
+
+function transformSIValue(representation) {
+    const baseUnitDecimal = convertToBaseUnitDecimal(representation.numericPart, representation.prefix.exponent);
+    const transformedBaseUnitDecimal = transformDigits(baseUnitDecimal);
+    const hasReplaceableZero = decimalPartsToString(transformedBaseUnitDecimal) !== decimalPartsToString(baseUnitDecimal)
+        || representation.prefix.exponent !== 0;
 
     return {
         hasReplaceableZero,
         representation: {
             ...representation,
-            transformedNumericPart: {
-                sign: representation.numericPart.sign,
-                integerDigits: transformedPrefixDecimal.integerDigits,
-                fractionDigits: trimFractionTrailingZeros(transformedPrefixDecimal.fractionDigits)
-            },
-            actualDecimal: {
-                integerDigits: actualDecimal.integerDigits,
-                fractionDigits: actualDecimal.fractionDigits
-            },
-            transformedActualDecimal: transformedActual
+            transformedNumericPart: transformedBaseUnitDecimal,
+            actualDecimal: baseUnitDecimal,
+            transformedActualDecimal: transformedBaseUnitDecimal
         }
     };
 }
@@ -2723,14 +2775,10 @@ function formatJapaneseHiraganaDigitSequence(transformedToken) {
 }
 
 function formatSI(transformedToken) {
-    if (!transformedToken.hasReplaceableZero) {
-        return { success: true, output: transformedToken.source, errors: [] };
-    }
-
     const numeric = transformedToken.transformedRepresentation.transformedNumericPart;
     return {
         success: true,
-        output: `${decimalPartsToString(numeric)}${transformedToken.representation.prefix.source}${transformedToken.representation.unitPart}`,
+        output: formatConvertedQuantity(numeric, transformedToken.representation.baseUnit),
         errors: []
     };
 }
@@ -2848,8 +2896,8 @@ const notationTransformFormatTests = [
     ["3分8毛", "1と1割3分1厘8毛"],
     ["三分八毛", "一と一割三分一厘八毛"],
     ["３厘８糸", "１と１割１分３厘１毛８糸"],
-    ["10k", "11.111k"],
-    ["10kg", "11.111kg"]
+    ["10mm", "1.11m"],
+    ["10kg", "11111g"]
 ];
 
 function runNotationTransformFormatTests() {
@@ -2888,8 +2936,8 @@ function runNotationTransformEdgeTests() {
         representation: null,
         style: { alphabet: "ascii" }
     });
-    const milli = transformAndFormatFirstCandidate("10m");
-    const mega = transformAndFormatFirstCandidate("10M");
+    const milli = transformAndFormatFirstCandidate("10mm");
+    const mega = transformAndFormatFirstCandidate("10Mm");
 
     return [
         {
@@ -2921,8 +2969,8 @@ function runNotationTransformEdgeTests() {
             formatted: romanOverflow
         },
         {
-            input: "10m / 10M",
-            pass: milli.output === "1111m" && mega.output === "11.111111M",
+            input: "10mm / 10Mm",
+            pass: milli.output === "1.11m" && mega.output === "11111111m",
             formatted: [milli, mega]
         }
     ];
@@ -2976,14 +3024,7 @@ function countReplaceableZerosInRepresentation(representation) {
     }
 
     if (representation.kind === "siValue") {
-        const normalized = normalizeDecimalDigits(
-            representation.numericPart.integerDigits,
-            representation.numericPart.fractionDigits
-        );
-        const actualDecimal = decimalFromDigitsAndPosition(
-            normalized.digits,
-            normalized.decimalPos + representation.prefix.exponent
-        );
+        const actualDecimal = convertToBaseUnitDecimal(representation.numericPart, representation.prefix.exponent);
 
         return countZerosInString(actualDecimal.integerDigits) + countZerosInString(actualDecimal.fractionDigits);
     }
@@ -3237,7 +3278,7 @@ function explainConversion(inputText) {
 const notationIntegrationTests = [
     {
         input: "10月、October、X、one hundred、百、じゅう、10kg",
-        expected: "11月、November、XI、one hundred eleven、百十一、じゅういち、11.111kg"
+        expected: "11月、November、XI、one hundred eleven、百十一、じゅういち、11111g"
     },
     {
         input: "12、eighteen、XII、十二、じゅうに",
@@ -3428,17 +3469,25 @@ const finalNotationSystemTests = [
     { system: "japaneseHiraganaDigitSequence", input: "まる", expected: "まる" },
     { system: "japaneseHiraganaDigitSequence", input: "れい", expected: "れい" },
     { system: "japaneseHiragana", input: "せんにひゃく", expected: "せんにひゃくじゅういち" },
-    { system: "si", input: "10k", expected: "11.111k" },
-    { system: "si", input: "10kg", expected: "11.111kg" },
-    { system: "si", input: "1.5M", expected: "1.511111M" },
-    { system: "si", input: "100m", expected: "1111m" },
-    { system: "si", input: "10μm", expected: "1111111μm" }
+    { system: "si", input: "10mm", expected: "1.11m" },
+    { system: "si", input: "10mg", expected: "1.11g" },
+    { system: "si", input: "1mm", expected: "1.111m" },
+    { system: "si", input: "1000mm", expected: "1m" },
+    { system: "si", input: "10cm", expected: "1.1m" },
+    { system: "si", input: "10μm", expected: "1.11111m" },
+    { system: "si", input: "10µm", expected: "1.11111m" },
+    { system: "si", input: "10um", expected: "1.11111m" },
+    { system: "si", input: "-10mm", expected: "-1.11m" },
+    { system: "si", input: "−10mm", expected: "-1.11m" },
+    { system: "si", input: "10kg", expected: "11111g" },
+    { system: "si-regression", input: "10m", expected: "11m" },
+    { system: "si-regression", input: "10mmHg 10ms 10mol", expected: "11mmHg 11ms 11mol" }
 ];
 
 const finalMixedTextTests = [
     {
         input: "10月、October、X、one hundred、百、じゅう、10kg",
-        expected: "11月、November、XI、one hundred eleven、百十一、じゅういち、11.111kg"
+        expected: "11月、November、XI、one hundred eleven、百十一、じゅういち、11111g"
     },
     {
         input: "12、eighteen、XII、十二、じゅうに",
@@ -3601,7 +3650,7 @@ function runFinalDocxXmlTests() {
         {
             name: "same-run",
             input: "<w:p><w:r><w:t>10 October X 百 10kg</w:t></w:r></w:p>",
-            expected: "<w:p><w:r><w:t>11 November XI 百十一 11.111kg</w:t></w:r></w:p>"
+            expected: "<w:p><w:r><w:t>11 November XI 百十一 11111g</w:t></w:r></w:p>"
         },
         {
             name: "split-October",
