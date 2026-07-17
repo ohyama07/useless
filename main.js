@@ -98,6 +98,22 @@ const hiraganaDigitSequenceVocabulary = {
     "く": "9"
 };
 const hiraganaDigitSequenceZeroWords = new Set(["ぜろ", "れい", "まる"]);
+const hiraganaFractionalCoefficientDictionary = {
+    "れい": 0,
+    "ぜろ": 0,
+    "いち": 1,
+    "に": 2,
+    "さん": 3,
+    "よん": 4,
+    "し": 4,
+    "ご": 5,
+    "ろく": 6,
+    "なな": 7,
+    "しち": 7,
+    "はち": 8,
+    "きゅう": 9,
+    "く": 9
+};
 const canonicalHiraganaDigits = {
     "0": "ぜろ",
     "1": "いち",
@@ -521,6 +537,8 @@ const detectionPriority = {
     englishMonthName: 100,
     englishOrdinal: 90,
     romanSuffix: 88,
+    japaneseHiraganaRateNumber: 89,
+    japaneseHiraganaFractionalNumber: 87,
     japaneseHiraganaDigitSequence: 85,
     englishCardinal: 80,
     scaledJapaneseNumber: 79,
@@ -852,6 +870,52 @@ function detectScaledJapaneseNumber(text) {
     return tokens;
 }
 
+function detectJapaneseHiraganaFractionalNumber(text) {
+    const tokens = [];
+    const coefficients = sortByLongestFirst(Object.keys(hiraganaFractionalCoefficientDictionary));
+    const units = sortByLongestFirst(Object.keys(hiraganaFractionalUnitDictionary));
+    const coefficientPattern = coefficients.map(escapeRegExp).join("|");
+    const unitPattern = units.map(escapeRegExp).join("|");
+    const pattern = new RegExp(`(?:(?:${coefficientPattern})(?:${unitPattern}))+`, "g");
+
+    for (const match of text.matchAll(pattern)) {
+        // 「にわりごぶ」のような歩合表記の途中を通常小数として拾わない。
+        if (text.slice(0, match.index).endsWith("わり")) {
+            continue;
+        }
+
+        tokens.push(createToken(match.index, match.index + match[0].length, match[0], "japaneseHiraganaFractionalNumber", 0.99, {
+            matchStrategy: "hiraganaCoefficientFractionalUnitSequence",
+            requiresSyntaxValidation: true
+        }));
+    }
+
+    return tokens;
+}
+
+function detectJapaneseHiraganaRateNumber(text) {
+    const tokens = [];
+    const coefficients = sortByLongestFirst(Object.keys(hiraganaFractionalCoefficientDictionary));
+    const units = sortByLongestFirst(Object.keys(hiraganaRateUnitDictionary));
+    const coefficientPattern = coefficients.map(escapeRegExp).join("|");
+    const unitPattern = units.map(escapeRegExp).join("|");
+    const pattern = new RegExp(`(?:(?:${coefficientPattern})(?:${unitPattern}))+`, "g");
+
+    for (const match of text.matchAll(pattern)) {
+        const tokenized = tokenizeHiraganaFractionTerms(match[0], hiraganaRateUnitDictionary);
+        if (!tokenized.valid || !tokenized.terms.some((term) => term.kanji === "割")) {
+            continue;
+        }
+
+        tokens.push(createToken(match.index, match.index + match[0].length, match[0], "japaneseHiraganaRateNumber", 1, {
+            matchStrategy: "hiraganaRateUnitSequence",
+            requiresSyntaxValidation: true
+        }));
+    }
+
+    return tokens;
+}
+
 function detectJapaneseDaiji(text) {
     const words = sortByLongestFirst(notationSystems.japaneseDaiji.regexVocabulary);
     const pattern = new RegExp(`(?:${words.map(escapeRegExp).join("|")})+`, "g");
@@ -990,6 +1054,8 @@ function detectAllNotationCandidates(text) {
     const candidates = [
         ...detectScaledJapaneseNumber(text),
         ...detectJapaneseMixedNumber(text),
+        ...detectJapaneseHiraganaRateNumber(text),
+        ...detectJapaneseHiraganaFractionalNumber(text),
         ...detectRomanSuffix(text),
         ...detectArabic(text),
         ...detectRoman(text),
@@ -1146,6 +1212,18 @@ const notationDetectionTests = [
         expectedTypes: ["japaneseMixedNumber", "japaneseMixedNumber", "japaneseMixedNumber"],
         expectedSources: ["6千", "3千5百", "1千20"],
         expectedTokenCount: 3
+    },
+    {
+        input: "いちぶにりんさんもう",
+        expectedTypes: ["japaneseHiraganaFractionalNumber"],
+        expectedSources: ["いちぶにりんさんもう"],
+        expectedTokenCount: 1
+    },
+    {
+        input: "さんわりにぶごりん",
+        expectedTypes: ["japaneseHiraganaRateNumber"],
+        expectedSources: ["さんわりにぶごりん"],
+        expectedTokenCount: 1
     },
     {
         input: "million October MMCC 2020",
@@ -1939,8 +2017,10 @@ function getJapaneseFractionCoefficientSystem(character) {
 }
 
 function parseJapaneseFractionalToken(source) {
-    const unitMap = new Map(japaneseFractionUnits.map((unit, index) => [unit.kanji, index + 1]));
-    const sortedUnits = sortByLongestFirst(japaneseFractionUnits.map((unit) => unit.kanji));
+    const isPercentageNotation = source.includes("割");
+    const activeUnits = isPercentageNotation ? japaneseFractionUnits : regularJapaneseFractionUnits;
+    const unitMap = new Map(activeUnits.map((unit, index) => [unit.kanji, index + 1]));
+    const sortedUnits = sortByLongestFirst(activeUnits.map((unit) => unit.kanji));
     let index = 0;
     const fractionDigits = [];
     const coefficientSystems = [];
@@ -1980,12 +2060,89 @@ function parseJapaneseFractionalToken(source) {
         },
         style: {
             numericSystem: "japaneseFraction",
-            fractionUnitSystem: "kanji",
+            fractionUnitSystem: isPercentageNotation ? "kanji-percentage" : "kanji-regular-fraction",
             coefficientNumeralSystem: coefficientSystems[0] || "kanji",
             mixedCoefficientStyle: new Set(coefficientSystems).size > 1
         },
         errors: []
     };
+}
+
+function tokenizeHiraganaFractionTerms(source, unitDictionary) {
+    const coefficientReadings = sortByLongestFirst(Object.keys(hiraganaFractionalCoefficientDictionary));
+    const unitReadings = sortByLongestFirst(Object.keys(unitDictionary));
+    const terms = [];
+    let index = 0;
+
+    while (index < source.length) {
+        const coefficientReading = coefficientReadings.find((reading) => source.startsWith(reading, index));
+        if (!coefficientReading) {
+            return { valid: false, terms, errors: [`Expected hiragana fractional coefficient at index ${index}`] };
+        }
+        index += coefficientReading.length;
+
+        const unitReading = unitReadings.find((reading) => source.startsWith(reading, index));
+        if (!unitReading) {
+            return { valid: false, terms, errors: [`Expected hiragana fractional unit at index ${index}`] };
+        }
+
+        const unit = unitDictionary[unitReading];
+        const coefficient = hiraganaFractionalCoefficientDictionary[coefficientReading];
+        terms.push({ coefficientReading, coefficient, unitReading, ...unit });
+        index += unitReading.length;
+    }
+
+    return { valid: true, terms, errors: [] };
+}
+
+function parseHiraganaFractionTerms(token, unitDictionary, outputStyle) {
+    const tokenized = tokenizeHiraganaFractionTerms(token.source, unitDictionary);
+    if (!tokenized.valid) {
+        return createParseResult(token, false, null, {}, tokenized.errors);
+    }
+
+    const fractionDigits = [];
+    let previousExponent = 0;
+
+    for (const term of tokenized.terms) {
+        if (term.exponent >= previousExponent) {
+            return createParseResult(token, false, null, {}, ["Hiragana fractional units must be in descending exponent order"]);
+        }
+
+        const fractionIndex = Math.abs(term.exponent) - 1;
+        fractionDigits[fractionIndex] = String(term.coefficient);
+        previousExponent = term.exponent;
+    }
+
+    const normalizedFractionDigits = Array.from(
+        { length: fractionDigits.length },
+        (_, fractionIndex) => fractionDigits[fractionIndex] || "0"
+    ).join("");
+
+    return createParseResult(token, true, {
+        kind: "decimalString",
+        sign: "",
+        integerDigits: "0",
+        fractionDigits: normalizedFractionDigits,
+        decimalSeparator: "."
+    }, {
+        numericSystem: outputStyle,
+        outputStyle,
+        terms: tokenized.terms
+    });
+}
+
+function parseJapaneseHiraganaFractionalNumberToken(token) {
+    return parseHiraganaFractionTerms(token, hiraganaFractionalUnitDictionary, "hiragana-fractional-units");
+}
+
+function parseJapaneseHiraganaRateNumberToken(token) {
+    const tokenized = tokenizeHiraganaFractionTerms(token.source, hiraganaRateUnitDictionary);
+    if (!tokenized.valid || tokenized.terms[0]?.kanji !== "割") {
+        return createParseResult(token, false, null, {}, ["Hiragana rate notation must begin with a coefficient followed by わり"]);
+    }
+
+    return parseHiraganaFractionTerms(token, hiraganaRateUnitDictionary, "hiragana-rate-units");
 }
 
 function parseJapaneseKanjiToken(token) {
@@ -2099,6 +2256,8 @@ const parserRegistry = {
     japaneseMonthName: parseJapaneseMonthToken,
     scaledJapaneseNumber: parseScaledJapaneseNumberToken,
     japaneseMixedNumber: parseJapaneseMixedNumberToken,
+    japaneseHiraganaRateNumber: parseJapaneseHiraganaRateNumberToken,
+    japaneseHiraganaFractionalNumber: parseJapaneseHiraganaFractionalNumberToken,
     japaneseKanji: parseJapaneseKanjiToken,
     japaneseDaiji: parseJapaneseDaijiToken,
     japaneseHiraganaDigitSequence: parseJapaneseHiraganaDigitSequenceToken,
@@ -2137,7 +2296,7 @@ function parseAllNotationCandidates(text) {
 }
 
 function getDecimalForTest(parsed) {
-    if (!parsed.valid || !parsed.representation) return null;
+    if (!parsed?.valid || !parsed.representation) return null;
 
     if (parsed.representation.kind === "decimalString") {
         return `${parsed.representation.sign}${parsed.representation.integerDigits}${parsed.representation.fractionDigits ? `.${parsed.representation.fractionDigits}` : ""}`;
@@ -2730,8 +2889,35 @@ const japaneseFractionUnits = [
     { exponent: -22, kanji: "清浄", daiji: "清浄", hiragana: "しょうじょう" },
     { exponent: -23, kanji: "阿頼耶", daiji: "阿頼耶", hiragana: "あらや" },
     { exponent: -24, kanji: "阿摩羅", daiji: "阿摩羅", hiragana: "あまら" },
-    { exponent: -25, kanji: "涅槃寂静", daiji: "涅槃寂静", hiragana: "ねはんじゃくじょう" }
+    { exponent: -25, kanji: "涅槃寂静", daiji: "涅槃寂静", hiragana: "ねはんじゃくじょう", hiraganaAliases: ["ねはんじゃくしょう"] }
 ];
+
+// 「割」を起点とする歩合表記とは別に、通常小数では「分」を10^-1とする。
+const regularJapaneseFractionUnits = japaneseFractionUnits.slice(1).map((unit, index) => ({
+    ...unit,
+    exponent: -(index + 1)
+}));
+
+// 漢字版を正とし、ひらがな表記は同じ定義から指数を共有する。
+// 「割」は歩合表記と分離するため、通常のひらがな小数入力辞書には含めない。
+const hiraganaFractionalUnitDictionary = Object.fromEntries(
+    regularJapaneseFractionUnits
+        .flatMap((unit) => [unit.hiragana, ...(unit.hiraganaAliases || [])].map((reading) => [reading, {
+            kanji: unit.kanji,
+            exponent: unit.exponent,
+            canonicalHiragana: unit.hiragana
+        }]))
+);
+
+const hiraganaRateUnitDictionary = Object.fromEntries(
+    japaneseFractionUnits.flatMap((unit) => (
+        [unit.hiragana, ...(unit.hiraganaAliases || [])].map((reading) => [reading, {
+            kanji: unit.kanji,
+            exponent: unit.exponent,
+            canonicalHiragana: unit.hiragana
+        }])
+    ))
+);
 
 function formatJapaneseSmallBlock(value, dictionary) {
     if (value === 0) return "";
@@ -2792,6 +2978,16 @@ const hiraganaOutputDictionary = {
     },
     largeUnit: (unitIndex) => japaneseHiraganaLargeUnits[unitIndex - 1]?.canonical || "",
     fractionUnit: (index) => japaneseFractionUnits[index]?.hiragana || ""
+};
+
+const regularKanjiFractionOutputDictionary = {
+    ...kanjiOutputDictionary,
+    fractionUnit: (index) => regularJapaneseFractionUnits[index]?.kanji || ""
+};
+
+const regularHiraganaFractionOutputDictionary = {
+    ...hiraganaOutputDictionary,
+    fractionUnit: (index) => regularJapaneseFractionUnits[index]?.hiragana || ""
 };
 
 function formatJapaneseGroupedInteger(representation, dictionary) {
@@ -2866,10 +3062,13 @@ function formatJapaneseKanji(transformedToken) {
     if (representation.kind === "decimalString") {
         const integerValue = Number(representation.integerDigits);
         const coefficientNumeralSystem = transformedToken.style.coefficientNumeralSystem || "kanji";
-        const integerOutput = formatJapaneseFractionInteger(integerValue, kanjiOutputDictionary, coefficientNumeralSystem);
+        const outputDictionary = transformedToken.style.fractionUnitSystem === "kanji-regular-fraction"
+            ? regularKanjiFractionOutputDictionary
+            : kanjiOutputDictionary;
+        const integerOutput = formatJapaneseFractionInteger(integerValue, outputDictionary, coefficientNumeralSystem);
         return {
             success: true,
-            output: formatJapaneseFraction(integerOutput, representation.fractionDigits, kanjiOutputDictionary, coefficientNumeralSystem),
+            output: formatJapaneseFraction(integerOutput, representation.fractionDigits, outputDictionary, coefficientNumeralSystem),
             errors: []
         };
     }
@@ -2883,6 +3082,38 @@ function formatJapaneseMixedNumber(transformedToken) {
     }
 
     return { success: true, output: formatJapaneseMixedGroupedInteger(transformedToken.transformedRepresentation), errors: [] };
+}
+
+function formatJapaneseHiraganaFractionByDictionary(transformedToken, outputDictionary) {
+    if (!transformedToken.hasReplaceableZero) {
+        return { success: true, output: transformedToken.source, errors: [] };
+    }
+
+    const representation = transformedToken.transformedRepresentation;
+    const integerOutput = formatJapaneseFractionInteger(
+        Number(representation.integerDigits),
+        outputDictionary,
+        "hiragana"
+    );
+
+    return {
+        success: true,
+        output: formatJapaneseFraction(
+            integerOutput,
+            representation.fractionDigits,
+            outputDictionary,
+            "hiragana"
+        ),
+        errors: []
+    };
+}
+
+function formatJapaneseHiraganaFractionalNumber(transformedToken) {
+    return formatJapaneseHiraganaFractionByDictionary(transformedToken, regularHiraganaFractionOutputDictionary);
+}
+
+function formatJapaneseHiraganaRateNumber(transformedToken) {
+    return formatJapaneseHiraganaFractionByDictionary(transformedToken, hiraganaOutputDictionary);
 }
 
 function formatScaledJapaneseNumber(transformedToken) {
@@ -2957,6 +3188,8 @@ const formatterRegistry = {
     japaneseMonthName: formatJapaneseMonth,
     scaledJapaneseNumber: formatScaledJapaneseNumber,
     japaneseMixedNumber: formatJapaneseMixedNumber,
+    japaneseHiraganaRateNumber: formatJapaneseHiraganaRateNumber,
+    japaneseHiraganaFractionalNumber: formatJapaneseHiraganaFractionalNumber,
     japaneseKanji: formatJapaneseKanji,
     japaneseDaiji: formatJapaneseDaiji,
     japaneseHiraganaDigitSequence: formatJapaneseHiraganaDigitSequence,
@@ -3056,11 +3289,11 @@ const notationTransformFormatTests = [
     ["むりょうたいすう", "むりょうたいすう"],
     ["いちまん", "いちまんせんひゃくじゅういち"],
     ["いちおく", "いちおくせんひゃくじゅういちまんせんひゃくじゅういち"],
-    ["3厘8糸", "1と1割1分3厘1毛8糸"],
-    ["三厘八糸", "一と一割一分三厘一毛八糸"],
-    ["3分8毛", "1と1割3分1厘8毛"],
-    ["三分八毛", "一と一割三分一厘八毛"],
-    ["３厘８糸", "１と１割１分３厘１毛８糸"],
+    ["3厘8糸", "1と1分3厘1毛8糸"],
+    ["三厘八糸", "一と一分三厘一毛八糸"],
+    ["3分8毛", "1と3分1厘8毛"],
+    ["三分八毛", "一と三分一厘八毛"],
+    ["３厘８糸", "１と１分３厘１毛８糸"],
     ["10mm", "1.11m"],
     ["10kg", "11111g"]
 ];
@@ -3154,6 +3387,8 @@ const defaultConvertOptions = {
         "japaneseMonthName",
         "scaledJapaneseNumber",
         "japaneseMixedNumber",
+        "japaneseHiraganaRateNumber",
+        "japaneseHiraganaFractionalNumber",
         "japaneseKanji",
         "japaneseDaiji",
         "japaneseHiraganaDigitSequence",
@@ -3476,7 +3711,7 @@ const notationIntegrationTests = [
     },
     {
         input: "3厘8糸",
-        expected: "1と1割1分3厘1毛8糸"
+        expected: "1と1分3厘1毛8糸"
     },
     {
         input: "10 Ⅽ 100",
@@ -3623,11 +3858,13 @@ const finalNotationSystemTests = [
     { system: "japaneseKanji", input: "万億", expected: "万億" },
     { system: "japaneseKanji", input: "十百", expected: "十百" },
     { system: "japaneseKanji", input: "千百百", expected: "千百百" },
-    { system: "japaneseKanjiFraction", input: "3厘8糸", expected: "1と1割1分3厘1毛8糸" },
-    { system: "japaneseKanjiFraction", input: "三厘八糸", expected: "一と一割一分三厘一毛八糸" },
-    { system: "japaneseKanjiFraction", input: "3分8毛", expected: "1と1割3分1厘8毛" },
-    { system: "japaneseKanjiFraction", input: "三分八毛", expected: "一と一割三分一厘八毛" },
-    { system: "japaneseKanjiFraction", input: "３厘８糸", expected: "１と１割１分３厘１毛８糸" },
+    { system: "japaneseKanjiFraction", input: "3厘8糸", expected: "1と1分3厘1毛8糸" },
+    { system: "japaneseKanjiFraction", input: "三厘八糸", expected: "一と一分三厘一毛八糸" },
+    { system: "japaneseKanjiFraction", input: "3分8毛", expected: "1と3分1厘8毛" },
+    { system: "japaneseKanjiFraction", input: "三分八毛", expected: "一と三分一厘八毛" },
+    { system: "japaneseKanjiFraction", input: "３厘８糸", expected: "１と１分３厘１毛８糸" },
+    { system: "japaneseKanjiFraction", input: "一分", expected: "一と一分" },
+    { system: "japanesePercentage", input: "二割五分六厘", expected: "一と二割五分六厘" },
     { system: "japaneseKanjiFraction", input: "3割5分", expected: "1と3割5分" },
     { system: "japaneseKanjiFraction", input: "三割五分", expected: "一と三割五分" },
     { system: "japaneseDaiji", input: "拾", expected: "拾壱" },
@@ -3738,6 +3975,89 @@ const finalMixedTextTests = [
         expected: "content millionaire hundredths attendant"
     }
 ];
+
+const hiraganaFractionalTests = [
+    { input: "いちぶ", kanjiInput: "一分", expected: "いちといちぶ" },
+    { input: "にりん", kanjiInput: "二厘", expected: "いちといちぶにりん" },
+    { input: "さんもう", kanjiInput: "三毛", expected: "いちといちぶいちりんさんもう" },
+    { input: "いちぶにりんさんもう", kanjiInput: "一分二厘三毛", expected: "いちといちぶにりんさんもう" },
+    { input: "いちねはんじゃくじょう", kanjiInput: "一涅槃寂静", canonicalEnding: "いちねはんじゃくじょう" },
+    { input: "いちねはんじゃくしょう", kanjiInput: "一涅槃寂静", canonicalEnding: "いちねはんじゃくじょう" },
+    { input: "いっぷん", expected: "いっぷん" },
+    { input: "さんぷん", expected: "さんぷん" },
+    { input: "じゅっぷん", expected: "じゅっぷん" },
+    { input: "ぶ", expected: "ぶ" },
+    { input: "りん", expected: "りん" },
+    { input: "文章のいちぶを変更する", expected: "文章のいちといちぶを変更する" },
+    { input: "いちもうにぶ", expected: "いちもうにぶ" }
+];
+
+function runHiraganaFractionalTests() {
+    return hiraganaFractionalTests.map((test) => {
+        const result = convertText(test.input, { includeDebugData: true });
+        const parsed = parseAllNotationCandidates(test.input)
+            .find((token) => token.type === "japaneseHiraganaFractionalNumber");
+        const kanjiResult = test.kanjiInput ? convertText(test.kanjiInput, { includeDebugData: true }) : null;
+        const kanjiParsed = test.kanjiInput
+            ? parseAllNotationCandidates(test.kanjiInput).find((token) => token.type === "japaneseKanji")
+            : null;
+        const internalValueMatches = !test.kanjiInput
+            || (getDecimalForTest(parsed) === getDecimalForTest(kanjiParsed)
+                && result.replacedZeroCount === kanjiResult.replacedZeroCount);
+        const outputMatches = test.expected == null || result.output === test.expected;
+        const canonicalMatches = test.canonicalEnding == null || result.output.endsWith(test.canonicalEnding);
+
+        return {
+            ...test,
+            output: result.output,
+            pass: outputMatches && canonicalMatches && internalValueMatches,
+            result,
+            internalValue: getDecimalForTest(parsed),
+            kanjiInternalValue: getDecimalForTest(kanjiParsed)
+        };
+    });
+}
+
+const hiraganaRateTests = [
+    { input: "さんわりにぶごりん", kanjiInput: "三割二分五厘", expected: "いちとさんわりにぶごりん" },
+    { input: "にわりごぶろくりん", kanjiInput: "二割五分六厘", expected: "いちとにわりごぶろくりん" },
+    { input: "さんわり", kanjiInput: "三割", expected: "いちとさんわり" },
+    { input: "さんわりにぶ", kanjiInput: "三割二分", expected: "いちとさんわりにぶ" },
+    { input: "きゅうわりきゅうぶきゅうりん", kanjiInput: "九割九分九厘", expected: "いちときゅうわりきゅうぶきゅうりん" },
+    { input: "れいわり", kanjiInput: "零割", expected: "いちといちわり" },
+    { input: "ぜろわり", kanjiInput: "零割", expected: "いちといちわり" },
+    { input: "しわり", kanjiInput: "四割", expected: "いちとよんわり" },
+    { input: "にぶごりん", expected: "いちとにぶごりん", expectedType: "japaneseHiraganaFractionalNumber" },
+    { input: "にりん", expected: "いちといちぶにりん", expectedType: "japaneseHiraganaFractionalNumber" },
+    { input: "いちぶ", expected: "いちといちぶ", expectedType: "japaneseHiraganaFractionalNumber" },
+    { input: "わり", expected: "わり" },
+    { input: "ぶ", expected: "ぶ" },
+    { input: "ごりんにぶ", expected: "ごりんにぶ" },
+    { input: "にぶさんわり", expected: "にぶさんわり" },
+    { input: "さんわりごりんにぶ", expected: "さんわりごりんにぶ" }
+];
+
+function runHiraganaRateTests() {
+    return hiraganaRateTests.map((test) => {
+        const result = convertText(test.input, { includeDebugData: true });
+        const parsed = parseAllNotationCandidates(test.input)[0];
+        const kanjiResult = test.kanjiInput ? convertText(test.kanjiInput, { includeDebugData: true }) : null;
+        const kanjiParsed = test.kanjiInput ? parseAllNotationCandidates(test.kanjiInput)[0] : null;
+        const internalValueMatches = !test.kanjiInput
+            || (getDecimalForTest(parsed) === getDecimalForTest(kanjiParsed)
+                && result.replacedZeroCount === kanjiResult.replacedZeroCount);
+        const typeMatches = !test.expectedType || parsed?.type === test.expectedType;
+
+        return {
+            ...test,
+            output: result.output,
+            pass: result.output === test.expected && internalValueMatches && typeMatches,
+            result,
+            internalValue: getDecimalForTest(parsed),
+            kanjiInternalValue: getDecimalForTest(kanjiParsed)
+        };
+    });
+}
 
 function runFinalNotationSystemTests() {
     return finalNotationSystemTests.map((test) => {
@@ -3883,6 +4203,8 @@ function runFinalRegressionTests() {
         integration: runNotationIntegrationTests(),
         notationSystems: runFinalNotationSystemTests(),
         mixedText: runFinalMixedTextTests(),
+        hiraganaFractional: runHiraganaFractionalTests(),
+        hiraganaRate: runHiraganaRateTests(),
         japaneseLargeUnitOrder: runJapaneseLargeUnitOrderTests(),
         docxXml: runFinalDocxXmlTests()
     };
@@ -3962,6 +4284,8 @@ globalThis.notationDetection = {
     detectJapaneseMonth,
     detectScaledJapaneseNumber,
     detectJapaneseMixedNumber,
+    detectJapaneseHiraganaRateNumber,
+    detectJapaneseHiraganaFractionalNumber,
     detectJapaneseKanji,
     detectJapaneseDaiji,
     detectJapaneseHiraganaDigitSequence,
@@ -3977,6 +4301,8 @@ globalThis.notationDetection = {
     parseJapaneseMonthToken,
     parseScaledJapaneseNumberToken,
     parseJapaneseMixedNumberToken,
+    parseJapaneseHiraganaRateNumberToken,
+    parseJapaneseHiraganaFractionalNumberToken,
     parseJapaneseKanjiToken,
     parseJapaneseDaijiToken,
     parseJapaneseHiraganaDigitSequenceToken,
@@ -3999,6 +4325,8 @@ globalThis.notationDetection = {
     formatJapaneseMonth,
     formatScaledJapaneseNumber,
     formatJapaneseMixedNumber,
+    formatJapaneseHiraganaRateNumber,
+    formatJapaneseHiraganaFractionalNumber,
     formatJapaneseKanji,
     formatJapaneseDaiji,
     formatJapaneseHiraganaDigitSequence,
@@ -4028,6 +4356,8 @@ globalThis.notationDetection = {
     runNotationIntegrationTests,
     runFinalNotationSystemTests,
     runFinalMixedTextTests,
+    runHiraganaFractionalTests,
+    runHiraganaRateTests,
     runJapaneseLargeUnitOrderTests,
     runFinalDocxXmlTests,
     runFinalRegressionTests
