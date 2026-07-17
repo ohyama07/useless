@@ -523,6 +523,7 @@ const detectionPriority = {
     romanSuffix: 88,
     japaneseHiraganaDigitSequence: 85,
     englishCardinal: 80,
+    scaledJapaneseNumber: 79,
     japaneseMixedNumber: 78,
     si: 75,
     japaneseDaiji: 70,
@@ -596,7 +597,7 @@ function resolveCandidateOverlaps(candidates) {
 function detectArabic(text) {
     const tokens = [];
     // 符号と小数点は数値表現の一部として扱い、-100 や 10.50 を1候補にまとめます。
-    const arabicPattern = /[-−]?(?:[0-9０-９]+(?:[.．][0-9０-９]+)?)/g;
+    const arabicPattern = /[-−]?(?:(?:[0-9０-９]{1,3}(?:[,，][0-9０-９]{3})+)|[0-9０-９]+)(?:[.．][0-9０-９]+)?/g;
 
     for (const match of text.matchAll(arabicPattern)) {
         tokens.push(createToken(match.index, match.index + match[0].length, match[0], "arabic", 1, {
@@ -811,21 +812,39 @@ function isValidJapaneseKanjiCandidate(source) {
 function detectJapaneseMixedNumber(text) {
     const tokens = [];
     const largeWords = sortByLongestFirst(japaneseLargeUnits.flatMap((unit) => [unit.canonical, ...(unit.aliases || [])]));
-    const largePattern = `(?:${largeWords.map(escapeRegExp).join("|")})`;
-    const kanjiSmallPattern = "[〇零一二三四五六七八九十百千]+";
-    const arabicPattern = "[0-9０-９]+";
-    const segmentPattern = `(?:${arabicPattern}|${kanjiSmallPattern})`;
-    const mixedPattern = new RegExp(`${segmentPattern}${largePattern}(?:${segmentPattern}${largePattern})*(?:${segmentPattern})?`, "g");
+    const numericPartPattern = `[0-9０-９〇零一二三四五六七八九十百千]|${largeWords.map(escapeRegExp).join("|")}`;
+    const mixedPattern = new RegExp(`(?:${numericPartPattern})+`, "g");
 
     for (const match of text.matchAll(mixedPattern)) {
         const source = match[0];
 
-        if (!/[0-9０-９]/.test(source)) {
+        if (!/[0-9０-９]/.test(source) || !/[十百千]|(?:万|億|兆|京|垓|𥝱|秭|穣|溝|澗|正|載|極|恒河沙|阿僧祇|那由他|不可思議|無量大数)/.test(source)) {
+            continue;
+        }
+
+        if (/[.．]/.test(text[match.index - 1] || "")) {
             continue;
         }
 
         tokens.push(createToken(match.index, match.index + source.length, source, "japaneseMixedNumber", 0.98, {
-            matchStrategy: "arabicAndJapaneseLargeUnits",
+            matchStrategy: "longestArabicJapaneseUnitRun",
+            requiresSyntaxValidation: true
+        }));
+    }
+
+    return tokens;
+}
+
+function detectScaledJapaneseNumber(text) {
+    const tokens = [];
+    const largeWords = sortByLongestFirst(japaneseLargeUnits.flatMap((unit) => [unit.canonical, ...(unit.aliases || [])]));
+    const largePattern = largeWords.map(escapeRegExp).join("|");
+    const continuationPattern = `[0-9０-９〇零一二三四五六七八九十百千]|${largePattern}`;
+    const pattern = new RegExp(`[0-9０-９]+[.．][0-9０-９]+(?:${largePattern})(?:${continuationPattern})*`, "g");
+
+    for (const match of text.matchAll(pattern)) {
+        tokens.push(createToken(match.index, match.index + match[0].length, match[0], "scaledJapaneseNumber", 0.99, {
+            matchStrategy: "decimalCoefficientWithJapaneseScale",
             requiresSyntaxValidation: true
         }));
     }
@@ -969,6 +988,7 @@ function detectSI(text) {
 
 function detectAllNotationCandidates(text) {
     const candidates = [
+        ...detectScaledJapaneseNumber(text),
         ...detectJapaneseMixedNumber(text),
         ...detectRomanSuffix(text),
         ...detectArabic(text),
@@ -1116,6 +1136,18 @@ const notationDetectionTests = [
         ]
     },
     {
+        input: "1.3万円と1万3千円と2億500万6千円",
+        expectedTypes: ["scaledJapaneseNumber", "japaneseMixedNumber", "japaneseMixedNumber"],
+        expectedSources: ["1.3万", "1万3千", "2億500万6千"],
+        expectedTokenCount: 3
+    },
+    {
+        input: "6千円と3千5百円と1千20円",
+        expectedTypes: ["japaneseMixedNumber", "japaneseMixedNumber", "japaneseMixedNumber"],
+        expectedSources: ["6千", "3千5百", "1千20"],
+        expectedTokenCount: 3
+    },
+    {
         input: "million October MMCC 2020",
         expectedTypes: ["englishCardinal", "englishMonthName", "roman", "arabic"]
     },
@@ -1176,6 +1208,8 @@ function parseArabicNumericString(source) {
             normalized += "-";
         } else if (character === "．") {
             normalized += ".";
+        } else if (character === "，") {
+            normalized += ",";
         } else {
             normalized += character;
         }
@@ -1187,7 +1221,18 @@ function parseArabicNumericString(source) {
         digitWidth = "full";
     }
 
-    const match = normalized.match(/^(-)?([0-9]+)(?:\.([0-9]+))?$/);
+    const hasDigitGrouping = normalized.includes(",");
+    if (!/^-?(?:(?:[0-9]{1,3}(?:,[0-9]{3})+)|[0-9]+)(?:\.[0-9]+)?$/.test(normalized)) {
+        return {
+            valid: false,
+            representation: null,
+            style: { digitWidth },
+            errors: ["Invalid Arabic numeric token"]
+        };
+    }
+
+    const compactNormalized = normalized.replace(/,/g, "");
+    const match = compactNormalized.match(/^(-)?([0-9]+)(?:\.([0-9]+))?$/);
 
     if (!match) {
         return {
@@ -1209,6 +1254,8 @@ function parseArabicNumericString(source) {
         },
         style: {
             digitWidth,
+            digitGrouping: hasDigitGrouping,
+            groupSeparator: source.includes("，") ? "，" : ",",
             originalDigits: source
         },
         errors: []
@@ -1733,24 +1780,56 @@ function getJapaneseLargeUnitEntry(source, index) {
 }
 
 function parseJapaneseMixedSegment(segment) {
-    if (/^[0-9０-９]+$/.test(segment)) {
-        const digits = normalizeArabicIntegerDigits(segment);
-        const value = Number(digits);
+    const kanjiDigitValues = { "〇": "0", "零": "0", "一": "1", "二": "2", "三": "3", "四": "4", "五": "5", "六": "6", "七": "7", "八": "8", "九": "9" };
+    const smallUnitPowers = { "十": 1, "百": 2, "千": 3 };
+    let index = 0;
+    let pendingDigits = "";
+    let total = 0;
+    let previousPower = Infinity;
 
-        if (!Number.isInteger(value) || value >= 10000) {
-            return { valid: false, value: 0, errors: ["Mixed Japanese segment must be a four-digit block"] };
+    while (index < segment.length) {
+        const character = segment[index];
+
+        if (/[0-9０-９]/.test(character)) {
+            let arabicRun = "";
+            while (index < segment.length && /[0-9０-９]/.test(segment[index])) {
+                arabicRun += segment[index];
+                index++;
+            }
+            pendingDigits += normalizeArabicIntegerDigits(arabicRun);
+            continue;
         }
 
-        return { valid: true, value, errors: [] };
+        if (kanjiDigitValues[character] != null) {
+            pendingDigits += kanjiDigitValues[character];
+            index++;
+            continue;
+        }
+
+        const power = smallUnitPowers[character];
+        if (power != null) {
+            if (power >= previousPower) {
+                return { valid: false, value: 0, errors: ["Mixed Japanese small units must be in descending order"] };
+            }
+
+            const coefficient = pendingDigits ? Number(pendingDigits) : 1;
+            total += coefficient * (10 ** power);
+            pendingDigits = "";
+            previousPower = power;
+            index++;
+            continue;
+        }
+
+        return { valid: false, value: 0, errors: [`Unknown mixed Japanese segment part at index ${index}`] };
     }
 
-    const parsed = parseJapaneseInteger(segment, japaneseKanjiLexicon, 4);
+    if (pendingDigits) total += Number(pendingDigits);
 
-    if (!parsed.valid || parsed.representation.groups.length !== 1 || parsed.representation.groups[0].unitIndex !== 0) {
-        return { valid: false, value: 0, errors: parsed.errors.length ? parsed.errors : ["Mixed Japanese segment must not contain large units"] };
+    if (!Number.isInteger(total) || total >= 10000) {
+        return { valid: false, value: 0, errors: ["Mixed Japanese segment must be a four-digit block"] };
     }
 
-    return { valid: true, value: Number(parsed.representation.groups[0].digits), errors: [] };
+    return { valid: true, value: total, errors: [] };
 }
 
 function parseJapaneseMixedNumberToken(token) {
@@ -1788,23 +1867,55 @@ function parseJapaneseMixedNumberToken(token) {
         }
     }
 
-    if (!sawLargeUnit) {
-        return createParseResult(token, false, null, {}, ["Japanese mixed number must contain a large unit"]);
-    }
-
     if (segment) {
         const parsedSegment = parseJapaneseMixedSegment(segment);
         if (!parsedSegment.valid) {
             return createParseResult(token, false, null, {}, parsedSegment.errors);
         }
         groups.set(0, parsedSegment.value);
+    } else if (!sawLargeUnit) {
+        return createParseResult(token, false, null, {}, ["Japanese mixed number has no numeric segment"]);
     }
 
     return createParseResult(token, true, {
         ...buildGroupedInteger(groups, 4),
-        outputStyle: "arabic-with-japanese-large-units"
+        outputStyle: "mixed-japanese-unit-expression"
     }, {
-        outputStyle: "arabic-with-japanese-large-units"
+        outputStyle: "mixed-japanese-unit-expression"
+    });
+}
+
+function parseScaledJapaneseNumberToken(token) {
+    const largeWords = sortByLongestFirst(japaneseLargeUnits.flatMap((unit) => [unit.canonical, ...(unit.aliases || [])]));
+    const scaleWord = largeWords.find((word) => token.source.endsWith(word));
+
+    if (!scaleWord) {
+        return createParseResult(token, false, null, {}, ["Scaled Japanese number must end with one large unit"]);
+    }
+
+    const coefficientSource = token.source.slice(0, -scaleWord.length);
+    if (!/^[0-9０-９]+[.．][0-9０-９]+$/.test(coefficientSource)) {
+        return createParseResult(token, false, null, {}, ["Decimal Japanese scale cannot be mixed with lower unit expressions"]);
+    }
+
+    const parsedCoefficient = parseArabicNumericString(coefficientSource);
+    const scaleEntry = japaneseLargeUnits.find((unit) => unit.canonical === scaleWord || (unit.aliases || []).includes(scaleWord));
+    if (!parsedCoefficient.valid || !scaleEntry) {
+        return createParseResult(token, false, null, {}, parsedCoefficient.errors || ["Unknown Japanese scale"]);
+    }
+
+    const decimalValue = convertToBaseUnitDecimal(parsedCoefficient.representation, scaleEntry.exponent);
+
+    return createParseResult(token, true, {
+        kind: "scaledJapaneseNumber",
+        coefficientSource,
+        scaleName: scaleWord,
+        scalePower: scaleEntry.exponent,
+        decimalValue,
+        outputStyle: "decimal-with-japanese-scale"
+    }, {
+        digitWidth: parsedCoefficient.style.digitWidth,
+        outputStyle: "decimal-with-japanese-scale"
     });
 }
 
@@ -1986,6 +2097,7 @@ const parserRegistry = {
     englishOrdinal: parseEnglishOrdinalToken,
     englishMonthName: parseEnglishMonthToken,
     japaneseMonthName: parseJapaneseMonthToken,
+    scaledJapaneseNumber: parseScaledJapaneseNumberToken,
     japaneseMixedNumber: parseJapaneseMixedNumberToken,
     japaneseKanji: parseJapaneseKanjiToken,
     japaneseDaiji: parseJapaneseDaijiToken,
@@ -2037,6 +2149,10 @@ function getDecimalForTest(parsed) {
 
     if (parsed.representation.kind === "mappedValue") {
         return parsed.representation.numericValue;
+    }
+
+    if (parsed.representation.kind === "scaledJapaneseNumber") {
+        return decimalPartsToString(parsed.representation.decimalValue);
     }
 
     return null;
@@ -2162,9 +2278,10 @@ function transformDecimalString(representation) {
 
 function transformGroupedInteger(representation) {
     let hasReplaceableZero = false;
-    const groups = representation.groups.map((group) => {
-        const digits = replaceZeroDigits(group.digits);
-        hasReplaceableZero = hasReplaceableZero || digits !== group.digits;
+    const groups = representation.groups.map((group, index) => {
+        const sourceDigits = index === 0 ? group.digits : group.digits.padStart(representation.groupSize, "0");
+        const digits = replaceZeroDigits(sourceDigits);
+        hasReplaceableZero = hasReplaceableZero || digits !== sourceDigits;
 
         return {
             ...group,
@@ -2300,6 +2417,18 @@ function transformSIValue(representation) {
     };
 }
 
+function transformScaledJapaneseNumber(representation) {
+    const transformedDecimalValue = transformDigits(representation.decimalValue);
+
+    return {
+        hasReplaceableZero: decimalPartsToString(transformedDecimalValue) !== decimalPartsToString(representation.decimalValue),
+        representation: {
+            ...representation,
+            transformedDecimalValue
+        }
+    };
+}
+
 function transformParsedToken(parsedToken) {
     if (!parsedToken.valid || !parsedToken.representation) {
         return {
@@ -2315,6 +2444,7 @@ function transformParsedToken(parsedToken) {
         groupedInteger: transformGroupedInteger,
         digitSequence: transformDigitSequence,
         mappedValue: transformMappedValue,
+        scaledJapaneseNumber: transformScaledJapaneseNumber,
         siValue: transformSIValue
     }[parsedToken.representation.kind];
 
@@ -2345,6 +2475,14 @@ function toFullWidthDigits(value) {
 function formatArabic(transformedToken) {
     const representation = transformedToken.transformedRepresentation || transformedToken.representation;
     let output = decimalPartsToString(representation);
+
+    if (transformedToken.style.digitGrouping) {
+        const sign = output.startsWith("-") ? "-" : "";
+        const unsigned = sign ? output.slice(1) : output;
+        const [integerPart, fractionPart] = unsigned.split(".");
+        const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, transformedToken.style.groupSeparator || ",");
+        output = `${sign}${groupedInteger}${fractionPart == null ? "" : `.${fractionPart}`}`;
+    }
 
     if (transformedToken.style.digitWidth === "full") {
         output = toFullWidthDigits(output);
@@ -2747,6 +2885,32 @@ function formatJapaneseMixedNumber(transformedToken) {
     return { success: true, output: formatJapaneseMixedGroupedInteger(transformedToken.transformedRepresentation), errors: [] };
 }
 
+function formatScaledJapaneseNumber(transformedToken) {
+    if (!transformedToken.hasReplaceableZero) {
+        return { success: true, output: transformedToken.source, errors: [] };
+    }
+
+    const representation = transformedToken.transformedRepresentation;
+    const decimalValue = representation.transformedDecimalValue;
+    const digits = `${decimalValue.integerDigits}${decimalValue.fractionDigits}`;
+    const decimalPosition = decimalValue.integerDigits.length - representation.scalePower;
+    const coefficient = normalizeDecimalString({
+        sign: decimalValue.sign,
+        ...decimalFromDigitsAndPosition(digits, decimalPosition)
+    });
+
+    let coefficientOutput = decimalPartsToString(coefficient);
+    if (transformedToken.style.digitWidth === "full") {
+        coefficientOutput = toFullWidthDigits(coefficientOutput);
+    }
+
+    return {
+        success: true,
+        output: `${coefficientOutput}${representation.scaleName}`,
+        errors: []
+    };
+}
+
 function formatJapaneseDaiji(transformedToken) {
     if (!transformedToken.hasReplaceableZero) {
         return { success: true, output: transformedToken.source, errors: [] };
@@ -2791,6 +2955,7 @@ const formatterRegistry = {
     englishOrdinal: formatEnglishOrdinal,
     englishMonthName: formatEnglishMonth,
     japaneseMonthName: formatJapaneseMonth,
+    scaledJapaneseNumber: formatScaledJapaneseNumber,
     japaneseMixedNumber: formatJapaneseMixedNumber,
     japaneseKanji: formatJapaneseKanji,
     japaneseDaiji: formatJapaneseDaiji,
@@ -2987,6 +3152,7 @@ const defaultConvertOptions = {
         "englishOrdinal",
         "englishMonthName",
         "japaneseMonthName",
+        "scaledJapaneseNumber",
         "japaneseMixedNumber",
         "japaneseKanji",
         "japaneseDaiji",
@@ -3012,7 +3178,10 @@ function countReplaceableZerosInRepresentation(representation) {
     }
 
     if (representation.kind === "groupedInteger") {
-        return representation.groups.reduce((sum, group) => sum + countZerosInString(group.digits), 0);
+        return representation.groups.reduce((sum, group, index) => {
+            const digits = index === 0 ? group.digits : group.digits.padStart(representation.groupSize, "0");
+            return sum + countZerosInString(digits);
+        }, 0);
     }
 
     if (representation.kind === "digitSequence") {
@@ -3021,6 +3190,11 @@ function countReplaceableZerosInRepresentation(representation) {
 
     if (representation.kind === "mappedValue") {
         return countZerosInString(representation.numericValue);
+    }
+
+    if (representation.kind === "scaledJapaneseNumber") {
+        return countZerosInString(representation.decimalValue.integerDigits)
+            + countZerosInString(representation.decimalValue.fractionDigits || "");
     }
 
     if (representation.kind === "siValue") {
@@ -3427,6 +3601,24 @@ const finalNotationSystemTests = [
     { system: "japaneseMixedNumber", input: "100万2000人", expected: "111万2111人" },
     { system: "japaneseMixedNumber", input: "3兆5000億", expected: "3兆5111億1111万1111" },
     { system: "japaneseMixedNumber", input: "12億3456万7000", expected: "12億3456万7111" },
+    { system: "scaledJapaneseNumber", input: "1.3万円", expected: "1.3111万円" },
+    { system: "scaledJapaneseNumber", input: "1.3万", expected: "1.3111万" },
+    { system: "scaledJapaneseNumber", input: "2.05億円", expected: "2.15111111億円" },
+    { system: "scaledJapaneseNumber", input: "1.3万5千円", expected: "1.3万5千円" },
+    { system: "japaneseMixedNumber", input: "1万3千円", expected: "1万3111円" },
+    { system: "japaneseMixedNumber", input: "1万3千", expected: "1万3111" },
+    { system: "arabicGrouped", input: "13,000円", expected: "13,111円" },
+    { system: "arabic", input: "13000円", expected: "13111円" },
+    { system: "japaneseMixedNumber", input: "100万円", expected: "111万1111円" },
+    { system: "japaneseMixedNumber", input: "2億500万円", expected: "2億1511万1111円" },
+    { system: "japaneseMixedNumber", input: "6千円", expected: "6111円" },
+    { system: "japaneseMixedNumber", input: "3千5百円", expected: "3511円" },
+    { system: "japaneseMixedNumber", input: "1千20円", expected: "1121円" },
+    { system: "japaneseMixedNumber", input: "1万6千円", expected: "1万6111円" },
+    { system: "japaneseMixedNumber", input: "2億500万6千円", expected: "2億1511万6111円" },
+    { system: "japaneseMixedNumber", input: "2億500万6000円", expected: "2億1511万6111円" },
+    { system: "japaneseMixedNumber-invalid", input: "3百5千円", expected: "3百5千円" },
+    { system: "japaneseMixedNumber-invalid", input: "2十5百円", expected: "2十5百円" },
     { system: "japaneseKanji", input: "百億万", expected: "百億万" },
     { system: "japaneseKanji", input: "万億", expected: "万億" },
     { system: "japaneseKanji", input: "十百", expected: "十百" },
@@ -3768,6 +3960,7 @@ globalThis.notationDetection = {
     detectEnglishOrdinal,
     detectEnglishMonth,
     detectJapaneseMonth,
+    detectScaledJapaneseNumber,
     detectJapaneseMixedNumber,
     detectJapaneseKanji,
     detectJapaneseDaiji,
@@ -3782,6 +3975,7 @@ globalThis.notationDetection = {
     parseEnglishOrdinalToken,
     parseEnglishMonthToken,
     parseJapaneseMonthToken,
+    parseScaledJapaneseNumberToken,
     parseJapaneseMixedNumberToken,
     parseJapaneseKanjiToken,
     parseJapaneseDaijiToken,
@@ -3793,6 +3987,7 @@ globalThis.notationDetection = {
     transformDecimalString,
     transformGroupedInteger,
     transformMappedValue,
+    transformScaledJapaneseNumber,
     transformSIValue,
     transformParsedToken,
     formatArabic,
@@ -3802,6 +3997,7 @@ globalThis.notationDetection = {
     formatEnglishOrdinal,
     formatEnglishMonth,
     formatJapaneseMonth,
+    formatScaledJapaneseNumber,
     formatJapaneseMixedNumber,
     formatJapaneseKanji,
     formatJapaneseDaiji,
